@@ -1,2 +1,2 @@
-# R_testing
+# r_testing
 test for rstudio integration
