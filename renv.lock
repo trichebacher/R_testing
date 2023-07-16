@@ -2191,6 +2191,17 @@
       ],
       "Hash": "e4e357f28c2edff493936b6cb30c3d65"
     },
+    "treeClust": {
+      "Package": "treeClust",
+      "Version": "1.1-7",
+      "Source": "Repository",
+      "Repository": "RSPM",
+      "Requirements": [
+        "cluster",
+        "rpart"
+      ],
+      "Hash": "f638f81bf5f4c9af2841d004ac87cb5c"
+    },
     "tzdb": {
       "Package": "tzdb",
       "Version": "0.4.0",

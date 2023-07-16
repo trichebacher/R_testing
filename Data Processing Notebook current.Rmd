@@ -1,0 +1,918 @@
+---
+title: "R Notebook"
+author: "Tom Richebacher"
+date: "7/11/2023"
+output: html_notebook
+---
+
+```{r call-libraries, echo=TRUE, warning=TRUE}
+
+R_LIBS_USER <- "C:/Users/Tom/OneDrive/R_code/win-library/4.2"
+
+library(formatR)
+library(HiClimR)
+library(lintr)
+library(data.table)
+library(caret)
+library(ggplot2)
+library(MLmetrics)
+library(janitor)
+library(partykit)
+library(stringr)
+library(DataExplorer)
+library(smbinning)
+library(funModeling)
+library(SmartEDA)
+library(fastDummies)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+library(treeClust)
+
+library(doParallel)
+detectCores()
+
+registerDoParallel(cores = 8)
+
+
+```
+
+## [Initialize global variables]{.underline}
+
+```{r initialize-global-variables, warning=TRUE}
+options(scipen = 999)
+use.integer64 <- FALSE
+
+#"REG" = regression, "B_CLASS" = binary class, "M_CLASS" = multiclass
+analysis_type <- "B_CLASS"
+input_files <- "1"
+project <- "Credit"
+report_path <- "C:/Users/trich/OneDrive/R_code/rtest/R_testing"
+data_path <- "C:/Users/trich/OneDrive/R_code/credit"
+set.seed(4193)
+```
+
+# [Get Files:]{.underline}
+
+## Read data
+
+```{r message=TRUE, warning=TRUE}
+read_data <- function(filename) {
+       fread(filename,
+                # Set separator as comma
+                sep = ",",
+                # Read all rows - use nrows = xxx to read partial file
+                nrows = -1,
+                # Check column names for validity
+                check.names = TRUE,
+                #read random sample
+                #n = 50000,
+                # Set header as first row
+                header = TRUE,
+                # treat all integer columns as 64-bit integers
+                #integer64 = 'numeric',
+                #Use quote to specify character used to quote strings in the file
+                #quote = "'",
+                #specify the possible string representations of missing values
+                na.strings = c("NA", "N/A", "null", "", "unknown"))
+ }
+
+# Call function to read in data files
+if (input_files == "1") {
+  DT <- read_data(paste0(data_path, "/DT.csv"))
+  saveRDS(DT, paste0(data_path, "/DT.Rds"))
+} else if (input_files == "2") {
+  train <- read_data("train.csv")
+  train[, file := "train"]
+  saveRDS(train, paste0(data_path, "/train.Rds"))
+  test <- read_data("test.csv")
+  test[, file := "test"]
+  saveRDS(test, paste0(data_path, "/test.Rds"))
+}
+
+rm(read_data)
+
+#for speed testind a data dublication function
+dt_dup <- rbindlist(rep(list(DT), 10000))
+DT <- copy(dt_dup)
+rm(dt_dup)
+start_time <- Sys.time()
+```
+
+## Stack train and test file
+
+```{r eval=FALSE, include=FALSE}
+if (input_files == 2) {
+
+    # function to identify column header differences
+    get_feature_names <- function(file1, file2) {
+        # find the names that are common between the tables
+        var_names <- intersect(names(file1), names(file2))
+        # find columns different in file1
+        var_names_file1 <- setdiff(names(file1), names(file2))
+        # find columns different in file 2
+        var_names_file2 <- setdiff(names(file2), names(file1))
+        # show all differences between the two files
+        col_diff <- paste0(var_names_file1, var_names_file2)
+        return(col_diff)
+    }
+
+    # return column header difference
+    get_feature_names(train, test)
+
+    # #assign Id if needed setnames(train, 'train_id', 'Id') setnames(test, 'test_id', 'Id')
+
+    # stack train and test
+    DT <- rbind(train, test, fill = TRUE, use.names = TRUE)
+    rm(train, test, get_feature_names)
+}
+
+```
+
+###### Join Files
+
+```{r eval=FALSE, include=FALSE}
+
+DT <-  merge(DT, people, by = "people_id", all.x = TRUE)
+DT$Id <- seq.int(nrow(DT))
+ 
+rm(people)
+```
+
+###### Sample File
+
+```{r Sample-file, eval=FALSE, include=FALSE}
+DT_sample <- DT[sample(.N, 30000)]
+```
+
+## Create record Id
+
+```{r}
+#create index
+DT[, Id := as.integer(.I)]
+
+#move index to 1st column
+setcolorder(DT, c("Id", colnames(DT)[1:(ncol(DT) - 1)]))
+```
+
+# [Column Work]{.underline}
+
+## Clean column headers
+
+```{r eval=FALSE, include=FALSE}
+# identify non standard column headers
+# Define a regex pattern for non-standard column names
+
+non_standard_pattern <- "^[^A-Za-z_].*$"
+
+# Identify non-standard column names
+non_standard_cols <- names(DT)[grepl(non_standard_pattern, names(DT))]
+
+# Print the non-standard column names
+print(non_standard_cols)
+
+# Clean column names
+setnames(DT, clean_names(names(DT)))
+
+setnames(DT, old = c("a", "d"), new = c("anew", "dnew"))
+
+rm(non_standard_pattern, non_standard_cols)
+```
+
+## Create sample for DIST report if records \> 50,000
+
+```{r}
+if (nrow(DT) > 100000) {
+   DT_dist_sample = DT[sample(.N, 50000)]
+} else {
+   DT_dist_sample <- DT
+}
+```
+
+## Distribution Report
+
+```{r paged.print=TRUE}
+# Table with basic statistics
+smbinning.eda(DT_dist_sample, rounding = 3)$eda
+
+rm(DT_dist_sample)
+```
+
+## Change Column Classes
+
+```{r eval=FALSE, include=FALSE}
+#individual var
+DT[, target := as.factor(target)]
+
+#by specific vars
+change_col_class <- c("return_dollar", "product_id")
+
+#by column text spring
+change_col_class <- grep("(cat|bin)", names(DT), value = TRUE)
+
+#by all vars of a specific class
+change_col_class <- colnames(DT[, .SD, .SDcols = sapply(DT, is.numeric)])
+
+#identify binaries to convert
+change_col_class <- names(Filter(function(x)uniqueN(na.omit(x)) <= 2 & max(x) == 1, DT))
+
+#********************************************************************************#
+#do actual conversion
+DT[, (change_col_class) := lapply(.SD, as.numeric), .SDcols = change_col_class]
+#********************************************************************************#
+#*
+rm(change_col_class)
+```
+
+## Delete unnecessary columns
+
+```{r eval=FALSE, include=FALSE}
+
+#delete columns with one value
+rm_cols <- colnames(DT)[sapply(DT, function(x) length(unique(x))) == 1]
+
+#delete specific cols
+rm_cols <- c("V1", "id")
+
+if (length(rm_cols) > 0) {
+  DT[, (rm_cols) := NULL]
+}
+
+rm(rm_cols)
+```
+
+# [Row Work]{.underline}
+
+## Get % missing
+
+```{r eval=FALSE, include=FALSE}
+# Calculate the number of missing values in each row
+DT[, row_miss_orig := rowSums(is.na(DT))]
+
+#run frequency count
+freq(DT$row_miss_orig)
+
+# filter out records if needed
+#dt[x <= 3]
+```
+
+###### Omit rows where either vars 'x' or 'y' have NA
+
+```{r eval=FALSE, include=FALSE}
+# select columns
+omit_row <- c("x", "y")
+
+# see how many records are left
+DT[complete.cases(DT[, ..omit_row]), ]
+```
+
+# Target Prep
+
+## Target Analysis & Prep
+
+```{r}
+# assign target name
+setnames(DT, "default", "target")
+
+# move target to 1st column
+setcolorder(DT, c("target", setdiff(names(DT), "target")))
+
+# target distribution
+if (analysis_type != "REG") {
+    DT[, .(.N), by = .(target)]
+    plot_bar(DT$target)
+} else {
+    plot_histogram(DT$target)
+}
+
+# rename target value when binary
+if (analysis_type == "B_CLASS") {
+DT[, target := ifelse(target == 1, "HaveNot", ifelse(target == 2, "Have", NA))]
+}
+
+# remove missing target records
+DT[!is.na(target)]
+```
+
+###### Normalize Target Variable
+
+```{r eval=FALSE, include=FALSE}
+DT[, target := log(target + 1)]
+```
+
+## Append identifier to original column headers
+
+```{r}
+# get names to exclude
+exclude_columns <- c("target", "Id")
+
+# Get original data columnns
+orig_columns <- setdiff(colnames(DT), exclude_columns)
+
+# define the suffix
+suffix <- "_orig"
+
+# Append the suffix to the selected columns
+setnames(DT, old = orig_columns, new = paste0(orig_columns, suffix))
+
+rm(orig_columns, exclude_columns, suffix)
+```
+
+# Create table with data that bypasses the analysis
+
+```{r include=FALSE}
+# identify vars for bypass table
+mov_var <- c("target", "Id")
+
+# create bypass table
+DT_report <- DT[, .SD, .SDcols = mov_var]
+
+# save bypass table
+saveRDS(DT_report, paste0(data_path, "/DT_tar.Rds"))
+
+# remove bypass table unless needed
+rm(mov_var)
+gc()
+```
+
+# Data Exploration
+
+## Create report sample if records \> 50,000
+
+```{r}
+if (nrow(DT) > 100000) {
+   DT_report_sample = DT[sample(.N, 50000)]
+} else {
+   DT_report_sample <- DT
+}
+```
+
+## General data profile report
+
+```{r include=FALSE}
+
+# create in depth data report
+data_profile_report <- create_report(DT_report_sample, y = "target", report_title = paste0(project, "Data Profile Report"), output_file = paste0(project, "Profile Report"), output_dir = report_path)
+```
+
+## Summary statistics for char and cat vars to target
+
+```{r include=FALSE}
+# analysis of categorical data
+stats_report_char_and_cat <- ExpCatStat(DT_report_sample[, -c("Id")],Target = "target",
+                                  result = "Stat",
+                                  clim = 10,        #max cat levels allowed
+                                  nlim = 10,        #max unique values for num vars
+                                  bins = 10,        #max number of bins
+                                  Pclass = "Have",
+                                  plot = TRUE,
+                                  top = 20,
+                                  Round = 2)
+```
+
+## Information value for char and cat vars to target
+
+```{r include=FALSE}
+info_report_char_and_cats <- ExpCatStat(DT_report_sample[, -c("Id")], Target = "target",
+           result = "IV",
+           clim = 5,          #max # of cats allowed
+           nlim = 10,         # of levels for num vars
+           bins = 10,         #max # of bins for cat & num vars
+           Pclass = "Have")
+```
+
+## Summary stats for numeric data to target
+
+```{r include=FALSE}
+stats_report_num_vars <- ExpNumStat(DT_report_sample[, -c("Id")],
+                                    by = "G",
+                                    gp = "target",
+                                    Qnt = NULL,
+                                    Nlim = 10,
+                                    MesofShape = 2,
+                                    Outlier = TRUE,
+                                    round = 2,
+                                    weight = NULL,
+                                    dcast = FALSE,
+                                    val = NULL)
+rm(DT_report_sample)
+```
+
+## Outlier analysis
+
+```{r eval=FALSE, include=FALSE}
+# #outlier analysis
+# num_cols <- colnames(DT)[sapply(DT, is.numeric) & names(DT) != "Id"]
+ 
+# outlier_analysis <- ExpOutliers(
+# DT,
+# varlist = num_cols,
+# method = "boxplot",
+# treatment = NULL,
+# capping = c(0.05, 0.95),
+# outflag = TRUE)
+# test
+```
+
+## Missing values
+
+Impute NA for incorrect missing value designation
+
+```{r eval=FALSE, include=FALSE}
+# replace values in all DT columns
+DT[DT == 9999999999] <- NA_integer_
+
+# replace values in specific columns
+impute_miss_values <- c("a", "b")
+
+DT[, impute_miss_values := lapply(.SD, function(x) replace(x, x == 9999999999, NA_integer_)), .SDcols = impute_miss_values]
+
+rm(impute_miss_values)
+```
+
+Graph missing value
+
+```{r}
+plot_missing(DT) + theme_bw() + ggtitle("Percent Missing Values")
+```
+
+## High Cardinality
+
+### Identify and collapse high cardinality vars
+
+```{r}
+library(Hmisc)
+#get factor and char columns, exclude target & require > 2 values
+char_fact_cols <- colnames(DT)[sapply(DT, function(x) {
+  (is.character(x) || is.factor(x)) && length(unique(x)) > 2
+}) & colnames(DT) != "target"]
+
+# frequency distribution before combining
+freq_before <- lapply(char_fact_cols, function(col) {
+  freq_dt <- freq(DT[, .(value = get(col))], plot = FALSE, na.rm = TRUE)
+  freq_dt <- cbind(freq_dt, column = col)
+  return(freq_dt)
+})
+
+# creates table that shows freqs before transformation
+freq_before <- rbindlist(freq_before)
+
+#each value in a var needs to have at least 5% coverage 
+threshold = 0.05   
+
+#combine levels
+if (length(char_fact_cols) > 0) {
+  DT[, (char_fact_cols) := lapply(.SD, function(x) combine.levels(x, minlev = threshold)), .SDcols = char_fact_cols]
+}
+
+# after combine frequency distributions
+freq_after <- lapply(char_fact_cols, function(col) {
+  freq_dt <- freq(DT[, .(value = get(col))], plot = FALSE, na.rm = TRUE)
+  freq_dt <- cbind(freq_dt, column = col)
+  return(freq_dt)
+})
+
+# creates table with freqs after transformation
+freq_after <- rbindlist(freq_after)
+
+rm(threshold, char_fact_cols)
+```
+
+## Create binary variable from reduced cardinality
+
+```{r}
+# get factor and char columns & exclude relevant columns
+conv_to_bins <- colnames(DT)[sapply(DT, function(x) {
+  (is.character(x) || is.factor(x)) && length(unique(x)) > 2
+}) & colnames(DT) != "target"]
+
+# length of the initial DT data 
+DT_cols <- ncol(DT) + 1
+
+if (length(conv_to_bins) > 0) {
+DT <- dummy_cols(
+  DT,
+  select_columns = conv_to_bins,
+  remove_first_dummy = FALSE,
+  remove_most_frequent_dummy = FALSE,
+  ignore_na = FALSE,
+  #remove_selected_columns = TRUE
+  split = NULL)}
+
+# Clean column names
+clean_names(DT)
+# Replace symbols with their corresponding abbreviations
+
+#replace < with LT
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "<", "LT"))
+
+#replace > with GT
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), ">", "GT"))
+
+#replace <= with LE
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "<=", "LE"))
+
+#replace => with GE
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "=>", "GE"))
+
+# Replace parentheses with an underscore
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "\\(|\\)", "_"))
+
+# Remove empty spaces from column names
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "\\s+", ""))
+
+#replace varies symbols with underscore
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "[&|/|,]", "_"))
+
+# Remove underscores at the end of column names
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "_$", ""))
+
+# define the suffix to name the bin columns
+suffix <- "_bin"
+
+# Get the bin column names to update
+cols_to_update <- colnames(DT)[DT_cols:length(DT)]
+
+# Append the suffix to the selected columns
+setnames(DT, old = cols_to_update, new = paste0(cols_to_update, suffix))
+
+# remove unnecessary orig_ identifier in the bin column
+setnames(DT, colnames(DT), str_replace_all(colnames(DT), "orig_", ""))
+
+#clean-up
+rm(conv_to_bins, DT_cols, cols_to_update, suffix)
+```
+
+## Create bins based on non-activity
+
+```{r eval=FALSE, include=FALSE}
+#creates dummy rows to fill in missing rows based on all combinations of
+#available character, factor, and date columns (if not otherwise specified).
+
+dummy_rows(
+.data,
+select_columns = NULL,
+dummy_value = NA,
+dummy_indicator = FALSE
+)
+```
+
+## Create weighted binaries
+
+```{r}
+# List of binary columns
+weighted_bin_cols <- colnames(DT)[grep("_bin", colnames(DT))]
+
+#create weighted binary
+DT[, paste0(weighted_bin_cols, "_perc") := lapply(.SD, function(col) ifelse(col == 1, sum(col == 1) / nrow(DT), 0)), .SDcols = weighted_bin_cols]
+
+rm(weighted_bin_cols)
+```
+
+# LAT/LONG work
+
+```{r eval=FALSE, include=FALSE}
+library(geosphere)
+
+#Dist from centroid
+DT$longmean <- mean((DT$longitude), na.rm = TRUE) / 1e6
+DT$latmean  <- mean((DT$latitude), na.rm = TRUE) / 1e6
+
+#Adjusted long lat
+DT$longitude1 <- DT$longitude / 1e6
+DT$latitude1 <- DT$latitude / 1e6
+
+# Haversine distance
+ncol(DT)
+DT$geodist <- distHaversine(p[,31:32], DT[, 33:34])
+
+rm_geo_cols <- c("longmean", "latmen", "longitude", "latitude1")
+
+DT <- DT[(rm_geo_cols) := NULL]
+```
+
+# Feature Creation
+
+## Row level - binary transformations
+
+```{r eval=FALSE, include=FALSE}
+
+#identify binary variables
+create_bin_vars <- names(Filter(function(x) uniqueN(na.omit(x)) <= 2 & max(x) == 1, DT))
+
+#create variable that sums the values in Bin_vars 
+DT[, DT_sums  :=  rowSums(.SD, na.rm = TRUE), .SDcols = c(create_bin_vars)]
+
+#compute mean of values in Bin_vars 
+DT[, DT_means := rowMeans(.SD, na.rm = TRUE), .SDcols = c(create_bin_vars)]
+
+#concatenate binary variable across columns and make it a factor variable
+DT[, bin_pattern := do.call(paste0,.SD),.SDcols = create_bin_vars]
+DT[, bin_pattern := as.factor(bin_pattern)]
+
+# count zeros in row
+DT[, num_cols_eq_0 := Reduce(sum, lapply(.SD, function(x) na.omit(x) == 0))]
+
+#indicate if there are more than 4 missing values
+DT[, high_nas := ifelse(amount_nas > 4, 1,0)] 
+
+rm(Bin_vars)
+```
+
+### Row level aggregation by specific columns
+
+```{r eval=FALSE, include=FALSE}
+
+#conditionalby header identification aggregation 
+#product_up <- names(DT_tar)[which(regexpr("M_UP_1", names(DT_tar)) > 0)]
+#DT_tar[, prod_up := rowSums(.SD), by=ncodpers, .SDcols = product_up]  
+
+cols_title <-  c("reg", "car", "calc")
+#cols_title <- names(DT3)[which(regexpr(p, names(DT3)) > 0)]
+
+ for (p in cols_title) 
+  {
+    cols_title <- names(DT3)[which(regexpr(p, names(DT3)) > 0)]   
+    DT3[, paste0(p, '_sum')    := rowSums(.SD, na.rm = TRUE),
+        .SDcols = c(cols_title)] 
+    DT3[, paste0(p, '_mean')   := rowMeans(.SD, na.rm = TRUE),
+        .SDcols = c(cols_title)]
+    DT3[, paste0(p, '_ratio')  := ifelse(get(paste0(p, '_mean')) == 0,0,
+                                             (get(paste0(p, '_sum'))) / get(paste0(p, '_mean'))) ]
+  }
+
+```
+
+### Casting to wide data when multiple ID exist - like customer id
+
+```{r eval=FALSE, include=FALSE}
+#create new summary table with sum, mean, count
+
+
+DT_summary_wide <- dcast(DT, customer_id ~ product_id + product_category,
+                         value.var = c("revenue_dollar", "return_dollar"), 
+                         fill = 0,
+                         fun.aggregate = list(sum, mean, length))
+
+#Create customer summary
+DT_customer_summary <- DT[, .(dol_revenue = sum(revenue_dollar),
+                              dol_returns = sum(return_dollar),
+                              cnt_purchases = length(product_id),
+                              cnt_prod_cats = .N,   
+                              cnt_returns = .N),
+                          by = .(customer_id)]
+
+# Combine customer and order summaries
+DT <- DT_summary_wide[DT_customer_summary, on = "Id"]
+
+```
+
+### Column level
+
+```{r eval=FALSE, include=FALSE}
+#create new variable in DT
+DT[,`:=`(u = z + 1, v = z - 1)] 
+```
+
+# Create interaction vars
+
+## Select column set used for interaction development
+
+```{r}
+#assign method to rpart and make sure categorical variable is factor
+#DT[, target := as.factor(target)]
+
+# Select original columns 
+orig_cols <- c("target",colnames(DT)[grep("_orig", colnames(DT))])
+
+# Select numeric columns with "_orig" in the column header
+orig_num_cols <- colnames(DT)[sapply(DT, function(x) is.numeric(x) || is.integer(x)) & grepl("_orig", colnames(DT))]
+
+# select new binary binary columns where "bin" is at the end of column name
+new_bin_cols <- c("target", grep("bin$", colnames(DT), value = TRUE))
+
+# select all weighted binary columns
+new_bin_wgt_cols <- c("target",colnames(DT)[grep("_perc", colnames(DT))])
+
+# assign chosen selection to analys_cols
+analys_cols <- c(new_bin_wgt_cols, orig_cols)
+```
+
+Create modeling sample if records \> 50000
+
+```{r}
+if (nrow(DT) > 100000) {
+   DT_model_sample = DT[sample(.N, 50000)]
+} else {
+   DT_model_sample <- DT
+}
+```
+
+## Chaid Tree
+
+```{r}
+
+if (analysis_type == "REG") {
+  method_m = "anova" 
+  } else {
+  method_m = "class"
+}
+
+#confusion matrix requires target is factor
+DT_model_sample[, target := as.factor(target)]
+
+#minimum oberservation in a terminal node is # of records * x
+min_node_split = nrow(DT_model_sample) * 0.025
+
+#usage parameters that control aspects of the rpart fit
+my_control <- rpart.control(minsplit = min_node_split * 3,
+              minbucket = min_node_split, 
+              xval = 10,
+              surrogatestyle = 0)
+
+set.seed()
+#when error message check for factor level - shouldn't be greater than 53
+# Fit an initial rpart model
+rpart_model_init <- rpart(target ~ .,
+                          data = DT_model_sample[, .SD, .SDcols = analys_cols],
+                          #data = DT[, -c("Id"),with = FALSE],
+                          method = method_m,
+                          control = my_control)
+
+# display cp table -> smaller CP value indicates a simpler tree,  It represents the cost of adding another variable to the mode
+printcp(rpart_model_init)
+
+#plot cp value
+plotcp(rpart_model_init)
+
+#plot tree - use tweak to adjust font size. 1 is default
+rpart.plot(rpart_model_init, type = 3, extra = 1, digits = 2,
+           fallen.leaves = TRUE, roundint = TRUE, cex = NULL,
+           tweak = 1.0, shadow.col = "grey")
+
+#print confusion matrix
+confusionMatrix(DT_model_sample$target, predict(rpart_model_init, newdata = DT_model_sample, type = method_m))
+
+# show population of end nodes
+print(rpart_model_init$frame$wt[rpart_model_init$frame$var == "<leaf>"])
+
+rm(min_node_split, my_control, orig_cols, orig_num_cols)
+```
+
+## Prune the tree
+
+```{r}
+# get cp of lowest xstd - cross-validation error (xstd). Low xstd incidation of less variability in model's performance across cross-validation splits
+cp_min_xstd <- rpart_model_init$cptable[which.min(rpart_model_init$cptable[, "xstd"]), "CP"]
+
+# prune using cp_min_xstd
+rpart_model <- prune(rpart_model_init, cp = cp_min_xstd, method_m = method_m)
+
+rpart.plot(rpart_model, type = 3, extra = 1, digits = 2,
+           fallen.leaves = TRUE, roundint = TRUE, cex = NULL,
+           tweak = 1.0, shadow.col = "grey")
+
+#show most important variables
+varImp(rpart_model, drop = TRUE) 
+
+#create predictions based on model
+confusionMatrix(DT_model_sample$target, predict(rpart_model, newdata = DT_model_sample, type = method_m))
+
+# show population of end nodes
+print(rpart_model$frame$wt[rpart_model$frame$var == "<leaf>"])
+
+rm(cp_min_xstd)
+gc()
+```
+
+## Create chaid interaction variables
+
+```{r include=FALSE}
+# Predict the nodes using the party model
+DT[, node_rank := rpart.predict.leaves(rpart_model, newdata = DT, type = "where")]
+
+#check counts
+freq(DT$node_rank)
+
+# Extract the frame object from rpart_model
+rpart_frame  <- data.table(rpart_model$frame)
+
+# create row count
+rpart_frame[, node_rank := as.integer(.I)]
+
+#select end nodes - called <leaf>
+rpart_frame <- rpart_frame[var == "<leaf>", .(node_rank, yval2.nodeprob)]
+
+# join DT & rpart_frame
+DT <- DT[rpart_frame, on = "node_rank"]
+
+#convert node_score to char for binning
+DT[, node_rank := as.character(node_rank)]
+
+# needed for suffix assignment below
+my_DT_cols = ncol(DT)
+
+#create binaries from node score
+DT <- dummy_cols(
+  DT,
+  select_columns = "node_rank",
+  remove_first_dummy = FALSE,
+  remove_most_frequent_dummy = FALSE,
+  ignore_na = FALSE,
+  split = NULL,
+  remove_selected_columns = TRUE)  
+
+# define the suffix
+suffix = "_cbin"
+
+# Get column names to append suffix
+cols_to_update <- colnames(DT)[my_DT_cols:length(DT)]
+
+# Append the suffix to the selected columns
+setnames(DT, old = cols_to_update, new = paste0(cols_to_update, suffix))
+
+rm(suffix, cols_to_update, my_DT_cols, rpart_frame)
+gc()
+```
+
+# Identify corr, nzv and linear depend
+
+Create analysis sample if records \> 50,000
+
+```{r}
+if (nrow(DT) > 100000) {
+   DT_analysis_sample = DT[sample(.N, 50000)]
+} else {
+   DT_analysis_sample <- DT
+}
+```
+
+Near zero variance
+
+```{r}
+nzv_cols <- nearZeroVar(DT_analysis_sample[, -c("target", "Id"), with = FALSE], 
+                        names = TRUE,
+                        saveMetrics = FALSE,
+                        freqCut = 95/5,
+                        uniqueCut = 10,
+                        allowParallel = TRUE)
+
+print(nzv_cols) 
+
+
+```
+
+High correlation variables
+
+```{r include=FALSE}
+# Get numeric column names & remove Id 
+num_cols <- colnames(DT)[sapply(DT, is.numeric) & names(DT) != "Id"]  
+
+# split work by 10, only upper triangle, use 64 bit algorithm
+cor_matrix <- fastCor(DT_analysis_sample[, ..num_cols], nSplit = 10, upperTri = TRUE, optBLAS = TRUE)
+
+# find the indices of the correlations above 0.8
+highCorr_index <- which(cor_matrix > 0.8, arr.ind = TRUE)
+
+# extract the pair names from the column names
+highCorr_names <- paste(colnames(DT)[highCorr_index[, 1]], colnames(DT)[highCorr_index[, 2]], sep = " - ")
+
+# print or save the pair names and the correlations
+high_cor_names <- as.data.table(cbind(highCorr_names, cor_matrix[highCorr_index]))
+
+#cleanup 
+rm(cor_matrix, highCorr_index, high_cor_names)
+
+```
+
+Linear dependencies
+
+```{r}
+# find linear dependencies
+lin_depend <- findLinearCombos(DT_analysis_sample[, ..num_cols])  
+
+# extract names of column indexes
+column_names <- lapply(lin_depend$linearCombos, function(index_list) {
+  colnames(DT)[index_list]
+})
+
+# print names
+print(column_names)
+end_time <- Sys.time()
+processing_time <- end_time - start_time
+print(processing_time)
+```
+
+## Remove nzv variable
+
+```{r}
+#delete near zero variance columns 
+#if (length(nzv_cols) > 0) {
+#  DT[, (nzv_cols) := NULL]}
+  # cleanup 
+rm(nzv_cols, num_cols)
+
+
+
+rm(DT_sample)
+```
