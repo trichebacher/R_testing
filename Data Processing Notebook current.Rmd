@@ -5,6 +5,8 @@ date: "7/11/2023"
 output: html_notebook
 ---
 
+# CALL LIBARIES
+
 ```{r call-libraries, echo=TRUE, warning=TRUE}
 
 R_LIBS_USER <- "C:/Users/Tom/OneDrive/R_code/win-library/4.2"
@@ -28,6 +30,7 @@ library(rattle)
 library(rpart.plot)
 library(RColorBrewer)
 library(treeClust)
+library(fst)
 
 library(doParallel)
 detectCores()
@@ -37,7 +40,7 @@ registerDoParallel(cores = 8)
 
 ```
 
-## [Initialize global variables]{.underline}
+# [INITIALIZE GLOBAL VARIABLES]{.underline}
 
 ```{r initialize-global-variables, warning=TRUE}
 options(scipen = 999)
@@ -49,10 +52,25 @@ input_files <- "1"
 project <- "Credit"
 report_path <- "C:/Users/trich/OneDrive/R_code/rtest/R_testing"
 data_path <- "C:/Users/trich/OneDrive/R_code/credit"
-set.seed(4193)
+set.seed(419)
 ```
 
-# [Get Files:]{.underline}
+# MY FUNCTIONS
+
+```{r}
+# a little fast frequency count function
+fast_freq <- function(DT, column_names) {
+  result <- lapply(column_names, function(column_name) {
+    DT[, .N, by = column_name]
+  })
+  return(result)
+}
+
+#result_list <- fast_freq(DT, c("months_loan_duration"))
+
+```
+
+# [GET FILES:]{.underline}
 
 ## Read data
 
@@ -93,9 +111,9 @@ if (input_files == "1") {
 rm(read_data)
 
 #for speed testind a data dublication function
-dt_dup <- rbindlist(rep(list(DT), 10000))
-DT <- copy(dt_dup)
-rm(dt_dup)
+#DT <- rbindlist(rep(list(DT), 100000))
+
+ 
 start_time <- Sys.time()
 ```
 
@@ -129,7 +147,7 @@ if (input_files == 2) {
 
 ```
 
-###### Join Files
+## Join Files
 
 ```{r eval=FALSE, include=FALSE}
 
@@ -137,12 +155,6 @@ DT <-  merge(DT, people, by = "people_id", all.x = TRUE)
 DT$Id <- seq.int(nrow(DT))
  
 rm(people)
-```
-
-###### Sample File
-
-```{r Sample-file, eval=FALSE, include=FALSE}
-DT_sample <- DT[sample(.N, 30000)]
 ```
 
 ## Create record Id
@@ -155,9 +167,35 @@ DT[, Id := as.integer(.I)]
 setcolorder(DT, c("Id", colnames(DT)[1:(ncol(DT) - 1)]))
 ```
 
-# [Column Work]{.underline}
+# [COLUMN WORK]{.underline}
 
-## Clean column headers
+Sample file if nrow \> 50,000
+
+```{r}
+if (nrow(DT) > 50000) {
+   DT_sample_1 <- DT[sample(nrow(DT), 50000, replace = FALSE), ]
+} else {
+   DT_sample_1 <- DT
+}
+```
+
+## Column Distribution Report
+
+```{r paged.print=TRUE}
+# Table with basic statistics
+smbinning.eda(DT_sample_1, rounding = 3)$eda
+gc()
+```
+
+## Column missing value graph
+
+```{r}
+plot_missing(DT_sample_1) + theme_bw() + ggtitle("Percent Missing Values")
+
+rm(DT_sample_1)
+```
+
+## Column headers cleaning
 
 ```{r eval=FALSE, include=FALSE}
 # identify non standard column headers
@@ -179,31 +217,9 @@ setnames(DT, old = c("a", "d"), new = c("anew", "dnew"))
 rm(non_standard_pattern, non_standard_cols)
 ```
 
-## Create sample for DIST report if records \> 50,000
-
-```{r}
-if (nrow(DT) > 100000) {
-   DT_dist_sample = DT[sample(.N, 50000)]
-} else {
-   DT_dist_sample <- DT
-}
-```
-
-## Distribution Report
-
-```{r paged.print=TRUE}
-# Table with basic statistics
-smbinning.eda(DT_dist_sample, rounding = 3)$eda
-
-rm(DT_dist_sample)
-```
-
-## Change Column Classes
+## Columns class changes
 
 ```{r eval=FALSE, include=FALSE}
-#individual var
-DT[, target := as.factor(target)]
-
 #by specific vars
 change_col_class <- c("return_dollar", "product_id")
 
@@ -224,7 +240,7 @@ DT[, (change_col_class) := lapply(.SD, as.numeric), .SDcols = change_col_class]
 rm(change_col_class)
 ```
 
-## Delete unnecessary columns
+## Column deletion
 
 ```{r eval=FALSE, include=FALSE}
 
@@ -241,9 +257,9 @@ if (length(rm_cols) > 0) {
 rm(rm_cols)
 ```
 
-# [Row Work]{.underline}
+# [ROW WORK]{.underline}
 
-## Get % missing
+## Row missing values 
 
 ```{r eval=FALSE, include=FALSE}
 # Calculate the number of missing values in each row
@@ -256,7 +272,7 @@ freq(DT$row_miss_orig)
 #dt[x <= 3]
 ```
 
-###### Omit rows where either vars 'x' or 'y' have NA
+## Row deletes by column ( 'x' or 'y' have NA)
 
 ```{r eval=FALSE, include=FALSE}
 # select columns
@@ -266,7 +282,27 @@ omit_row <- c("x", "y")
 DT[complete.cases(DT[, ..omit_row]), ]
 ```
 
-# Target Prep
+# MISSING VALUE IMPUTE
+
+## Impute NA for incorrect missing values
+
+```{r eval=FALSE, include=FALSE}
+
+# Identify the values to replace
+value_to_replace <- 9999999999
+
+# Identify the columns to modify
+cols_to_modify <- names(DT)
+
+# Apply the modification using set() and lapply()
+lapply(cols_to_modify, function(col) {
+  set(DT, i = which(DT[[col]] == value_to_replace), j = col, value = NA_integer_)
+})
+
+rm(value_to_replace, cols_to_modify)
+```
+
+# TARGET PREP
 
 ## Target Analysis & Prep
 
@@ -287,18 +323,22 @@ if (analysis_type != "REG") {
 
 # rename target value when binary
 if (analysis_type == "B_CLASS") {
-DT[, target := ifelse(target == 1, "HaveNot", ifelse(target == 2, "Have", NA))]
+  DT[, target := as.factor(target)]
+#DT[, target := ifelse(target == 1, "HaveNot", ifelse(target == 2, "Have", NA))]
 }
 
 # remove missing target records
 DT[!is.na(target)]
+gc()
 ```
 
-###### Normalize Target Variable
+## Normalize Target Variable
 
 ```{r eval=FALSE, include=FALSE}
 DT[, target := log(target + 1)]
 ```
+
+# CREATE TABLE WITH DATA TO BYPASS ANALYSIS
 
 ## Append identifier to original column headers
 
@@ -318,32 +358,40 @@ setnames(DT, old = orig_columns, new = paste0(orig_columns, suffix))
 rm(orig_columns, exclude_columns, suffix)
 ```
 
-# Create table with data that bypasses the analysis
+## Move bypass variable to new table
 
 ```{r include=FALSE}
 # identify vars for bypass table
 mov_var <- c("target", "Id")
 
 # create bypass table
-DT_report <- DT[, .SD, .SDcols = mov_var]
+DT_report_file <- DT[, .SD, .SDcols = mov_var]
 
-# save bypass table
-saveRDS(DT_report, paste0(data_path, "/DT_tar.Rds"))
+# Store the data table to disk in compressed version
+write.fst(DT_report_file, paste0(data_path, "/DT_report.Rds"), 100)
+
+# Retrieve the data 
+# DT_report.Rds <- read.fst(paste0(data_path, "/DT_report.Rds"),
+#          columns = NULL,
+#          from = 1,
+#          to = NULL,
+#          as.data.table = FALSE,
+#          old_format = FALSE)
 
 # remove bypass table unless needed
-rm(mov_var)
+rm(mov_var, DT_report_file)
 gc()
 ```
 
-# Data Exploration
+# DATA EXPLORATION
 
-## Create report sample if records \> 50,000
+Sample for report if records \> 50,000
 
 ```{r}
-if (nrow(DT) > 100000) {
-   DT_report_sample = DT[sample(.N, 50000)]
+if (nrow(DT) > 50000) {
+   DT_sample_2 <- DT[sample(nrow(DT), 50000, replace = FALSE), ]
 } else {
-   DT_report_sample <- DT
+   DT_sample_2 <- DT
 }
 ```
 
@@ -352,14 +400,14 @@ if (nrow(DT) > 100000) {
 ```{r include=FALSE}
 
 # create in depth data report
-data_profile_report <- create_report(DT_report_sample, y = "target", report_title = paste0(project, "Data Profile Report"), output_file = paste0(project, "Profile Report"), output_dir = report_path)
+data_profile_report <- create_report(DT_sample_2, y = "target", report_title = paste0(project, "Data Profile Report"), output_file = paste0(project, "Profile Report"), output_dir = report_path)
 ```
 
 ## Summary statistics for char and cat vars to target
 
 ```{r include=FALSE}
 # analysis of categorical data
-stats_report_char_and_cat <- ExpCatStat(DT_report_sample[, -c("Id")],Target = "target",
+stats_report_char_and_cat <- ExpCatStat(DT_sample_2[, -c("Id")],Target = "target",
                                   result = "Stat",
                                   clim = 10,        #max cat levels allowed
                                   nlim = 10,        #max unique values for num vars
@@ -373,7 +421,7 @@ stats_report_char_and_cat <- ExpCatStat(DT_report_sample[, -c("Id")],Target = "t
 ## Information value for char and cat vars to target
 
 ```{r include=FALSE}
-info_report_char_and_cats <- ExpCatStat(DT_report_sample[, -c("Id")], Target = "target",
+info_report_char_and_cats <- ExpCatStat(DT_sample_2[, -c("Id")], Target = "target",
            result = "IV",
            clim = 5,          #max # of cats allowed
            nlim = 10,         # of levels for num vars
@@ -384,7 +432,7 @@ info_report_char_and_cats <- ExpCatStat(DT_report_sample[, -c("Id")], Target = "
 ## Summary stats for numeric data to target
 
 ```{r include=FALSE}
-stats_report_num_vars <- ExpNumStat(DT_report_sample[, -c("Id")],
+stats_report_num_vars <- ExpNumStat(DT_sample_2[, -c("Id")],
                                     by = "G",
                                     gp = "target",
                                     Qnt = NULL,
@@ -395,7 +443,6 @@ stats_report_num_vars <- ExpNumStat(DT_report_sample[, -c("Id")],
                                     weight = NULL,
                                     dcast = FALSE,
                                     val = NULL)
-rm(DT_report_sample)
 ```
 
 ## Outlier analysis
@@ -414,42 +461,19 @@ rm(DT_report_sample)
 # test
 ```
 
-## Missing values
+# HIGH CARDINALITY
 
-Impute NA for incorrect missing value designation
-
-```{r eval=FALSE, include=FALSE}
-# replace values in all DT columns
-DT[DT == 9999999999] <- NA_integer_
-
-# replace values in specific columns
-impute_miss_values <- c("a", "b")
-
-DT[, impute_miss_values := lapply(.SD, function(x) replace(x, x == 9999999999, NA_integer_)), .SDcols = impute_miss_values]
-
-rm(impute_miss_values)
-```
-
-Graph missing value
-
-```{r}
-plot_missing(DT) + theme_bw() + ggtitle("Percent Missing Values")
-```
-
-## High Cardinality
-
-### Identify and collapse high cardinality vars
+## Identify and collapse high cardinality vars
 
 ```{r}
 library(Hmisc)
-#get factor and char columns, exclude target & require > 2 values
-char_fact_cols <- colnames(DT)[sapply(DT, function(x) {
-  (is.character(x) || is.factor(x)) && length(unique(x)) > 2
-}) & colnames(DT) != "target"]
+#get non-numeric columns, exclude target & require > 2 values
+char_fact_cols <- colnames(DT)[!sapply(DT, function(x) {
+  (is.numeric(x))}) & colnames(DT) != "target"]   
 
 # frequency distribution before combining
 freq_before <- lapply(char_fact_cols, function(col) {
-  freq_dt <- freq(DT[, .(value = get(col))], plot = FALSE, na.rm = TRUE)
+  freq_dt <- freq(DT_sample_2[, .(value = get(col))], plot = FALSE, na.rm = TRUE)
   freq_dt <- cbind(freq_dt, column = col)
   return(freq_dt)
 })
@@ -467,7 +491,7 @@ if (length(char_fact_cols) > 0) {
 
 # after combine frequency distributions
 freq_after <- lapply(char_fact_cols, function(col) {
-  freq_dt <- freq(DT[, .(value = get(col))], plot = FALSE, na.rm = TRUE)
+  freq_dt <- freq(DT_sample_2[, .(value = get(col))], plot = FALSE, na.rm = TRUE)
   freq_dt <- cbind(freq_dt, column = col)
   return(freq_dt)
 })
@@ -475,7 +499,8 @@ freq_after <- lapply(char_fact_cols, function(col) {
 # creates table with freqs after transformation
 freq_after <- rbindlist(freq_after)
 
-rm(threshold, char_fact_cols)
+rm(threshold, char_fact_cols, DT_sample_2)
+gc()
 ```
 
 ## Create binary variable from reduced cardinality
@@ -496,7 +521,7 @@ DT <- dummy_cols(
   remove_first_dummy = FALSE,
   remove_most_frequent_dummy = FALSE,
   ignore_na = FALSE,
-  #remove_selected_columns = TRUE
+  remove_selected_columns = FALSE,
   split = NULL)}
 
 # Clean column names
@@ -541,6 +566,7 @@ setnames(DT, colnames(DT), str_replace_all(colnames(DT), "orig_", ""))
 
 #clean-up
 rm(conv_to_bins, DT_cols, cols_to_update, suffix)
+gc()
 ```
 
 ## Create bins based on non-activity
@@ -563,13 +589,21 @@ dummy_indicator = FALSE
 # List of binary columns
 weighted_bin_cols <- colnames(DT)[grep("_bin", colnames(DT))]
 
-#create weighted binary
-DT[, paste0(weighted_bin_cols, "_perc") := lapply(.SD, function(col) ifelse(col == 1, sum(col == 1) / nrow(DT), 0)), .SDcols = weighted_bin_cols]
+# get DT row count
+DT_rows <- nrow(DT)
 
-rm(weighted_bin_cols)
+
+for (col in weighted_bin_cols) {
+  new_col_name <- paste0(col, "_perc")
+  set(DT, j = new_col_name, value = sum(DT[[col]] == 1) / nrow(DT))
+}
+
+
+rm(weighted_bin_cols, col_sums, DT_rows)
+gc()
 ```
 
-# LAT/LONG work
+# LAT/LONG WORK
 
 ```{r eval=FALSE, include=FALSE}
 library(geosphere)
@@ -688,6 +722,10 @@ orig_cols <- c("target",colnames(DT)[grep("_orig", colnames(DT))])
 # Select numeric columns with "_orig" in the column header
 orig_num_cols <- colnames(DT)[sapply(DT, function(x) is.numeric(x) || is.integer(x)) & grepl("_orig", colnames(DT))]
 
+# Select char columns with "_orig" in the column header
+orig_char_cols <- colnames(DT)[sapply(DT, function(x) is.character(x)) & grepl("_orig", colnames(DT))]
+
+
 # select new binary binary columns where "bin" is at the end of column name
 new_bin_cols <- c("target", grep("bin$", colnames(DT), value = TRUE))
 
@@ -695,14 +733,14 @@ new_bin_cols <- c("target", grep("bin$", colnames(DT), value = TRUE))
 new_bin_wgt_cols <- c("target",colnames(DT)[grep("_perc", colnames(DT))])
 
 # assign chosen selection to analys_cols
-analys_cols <- c(new_bin_wgt_cols, orig_cols)
+analys_cols <- c(new_bin_cols)
 ```
 
 Create modeling sample if records \> 50000
 
 ```{r}
-if (nrow(DT) > 100000) {
-   DT_model_sample = DT[sample(.N, 50000)]
+if (nrow(DT) > 50000) {
+   DT_model_sample <- DT[sample(nrow(DT), 50000, replace = FALSE), ]
 } else {
    DT_model_sample <- DT
 }
@@ -730,7 +768,6 @@ my_control <- rpart.control(minsplit = min_node_split * 3,
               xval = 10,
               surrogatestyle = 0)
 
-set.seed()
 #when error message check for factor level - shouldn't be greater than 53
 # Fit an initial rpart model
 rpart_model_init <- rpart(target ~ .,
@@ -841,7 +878,7 @@ Create analysis sample if records \> 50,000
 
 ```{r}
 if (nrow(DT) > 100000) {
-   DT_analysis_sample = DT[sample(.N, 50000)]
+   DT_analysis_sample <- DT[sample(nrow(DT), 50000, replace = FALSE), ]
 } else {
    DT_analysis_sample <- DT
 }
@@ -850,7 +887,7 @@ if (nrow(DT) > 100000) {
 Near zero variance
 
 ```{r}
-nzv_cols <- nearZeroVar(DT_analysis_sample[, -c("target", "Id"), with = FALSE], 
+nzv_cols <- nearZeroVar(DT_analysis_sample[, -c("target", "Id")], 
                         names = TRUE,
                         saveMetrics = FALSE,
                         freqCut = 95/5,
