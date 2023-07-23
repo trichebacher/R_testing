@@ -111,10 +111,7 @@ if (input_files == "1") {
 rm(read_data)
 
 #for speed testind a data dublication function
-#DT <- rbindlist(rep(list(DT), 100000))
-
- 
-start_time <- Sys.time()
+#DT <- rbindlist(rep(list(DT), 10000))
 ```
 
 ## Stack train and test file
@@ -259,7 +256,7 @@ rm(rm_cols)
 
 # [ROW WORK]{.underline}
 
-## Row missing values 
+## Row missing values
 
 ```{r eval=FALSE, include=FALSE}
 # Calculate the number of missing values in each row
@@ -595,11 +592,10 @@ DT_rows <- nrow(DT)
 
 for (col in weighted_bin_cols) {
   new_col_name <- paste0(col, "_perc")
-  set(DT, j = new_col_name, value = sum(DT[[col]] == 1) / nrow(DT))
+  set(DT, j = new_col_name, value = ifelse(DT[[col]] == 1, sum(DT[[col]] == 1) / DT_rows, 0))
 }
 
-
-rm(weighted_bin_cols, col_sums, DT_rows)
+rm(weighted_bin_cols, DT_rows)
 gc()
 ```
 
@@ -708,9 +704,9 @@ DT <- DT_summary_wide[DT_customer_summary, on = "Id"]
 DT[,`:=`(u = z + 1, v = z - 1)] 
 ```
 
-# Create interaction vars
+# CREATE CHAID INTERACTION VARS
 
-## Select column set used for interaction development
+## Select column set used for development
 
 ```{r}
 #assign method to rpart and make sure categorical variable is factor
@@ -733,7 +729,7 @@ new_bin_cols <- c("target", grep("bin$", colnames(DT), value = TRUE))
 new_bin_wgt_cols <- c("target",colnames(DT)[grep("_perc", colnames(DT))])
 
 # assign chosen selection to analys_cols
-analys_cols <- c(new_bin_cols)
+analys_cols <- c(orig_cols)
 ```
 
 Create modeling sample if records \> 50000
@@ -755,9 +751,6 @@ if (analysis_type == "REG") {
   } else {
   method_m = "class"
 }
-
-#confusion matrix requires target is factor
-DT_model_sample[, target := as.factor(target)]
 
 #minimum oberservation in a terminal node is # of records * x
 min_node_split = nrow(DT_model_sample) * 0.025
@@ -818,7 +811,7 @@ confusionMatrix(DT_model_sample$target, predict(rpart_model, newdata = DT_model_
 # show population of end nodes
 print(rpart_model$frame$wt[rpart_model$frame$var == "<leaf>"])
 
-rm(cp_min_xstd)
+rm(cp_min_xstd, DT_model_sample)
 gc()
 ```
 
@@ -868,11 +861,11 @@ cols_to_update <- colnames(DT)[my_DT_cols:length(DT)]
 # Append the suffix to the selected columns
 setnames(DT, old = cols_to_update, new = paste0(cols_to_update, suffix))
 
-rm(suffix, cols_to_update, my_DT_cols, rpart_frame)
+rm(suffix, cols_to_update, my_DT_cols, rpart_frame, analys_cols, new_bin_cols, new_bin_wgt_cols)
 gc()
 ```
 
-# Identify corr, nzv and linear depend
+# IDENTIFY CORR, NZV & LINEAR DEPENDENT
 
 Create analysis sample if records \> 50,000
 
@@ -884,7 +877,7 @@ if (nrow(DT) > 100000) {
 }
 ```
 
-Near zero variance
+# Near zero variance
 
 ```{r}
 nzv_cols <- nearZeroVar(DT_analysis_sample[, -c("target", "Id")], 
@@ -895,11 +888,9 @@ nzv_cols <- nearZeroVar(DT_analysis_sample[, -c("target", "Id")],
                         allowParallel = TRUE)
 
 print(nzv_cols) 
-
-
 ```
 
-High correlation variables
+# High correlation variables
 
 ```{r include=FALSE}
 # Get numeric column names & remove Id 
@@ -918,11 +909,11 @@ highCorr_names <- paste(colnames(DT)[highCorr_index[, 1]], colnames(DT)[highCorr
 high_cor_names <- as.data.table(cbind(highCorr_names, cor_matrix[highCorr_index]))
 
 #cleanup 
-rm(cor_matrix, highCorr_index, high_cor_names)
+rm(cor_matrix, highCorr_index, highCorr_names, num_cols)
 
 ```
 
-Linear dependencies
+# Linear dependencies
 
 ```{r}
 # find linear dependencies
@@ -936,8 +927,7 @@ column_names <- lapply(lin_depend$linearCombos, function(index_list) {
 # print names
 print(column_names)
 end_time <- Sys.time()
-processing_time <- end_time - start_time
-print(processing_time)
+rm(column_names)
 ```
 
 ## Remove nzv variable
@@ -951,5 +941,12 @@ rm(nzv_cols, num_cols)
 
 
 
-rm(DT_sample)
+rm(DT_analysis_sample)
+```
+
+# SAVE DT 
+
+```{r}
+# Store the data table to disk in compressed version
+write.fst(DT, paste0(data_path, "/DT.Rds"), 100)
 ```
