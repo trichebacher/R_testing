@@ -1,0 +1,154 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# [CALL LIBRARIES]{.underline}
+
+```{r}
+library(caretEnsemble)
+library(AppliedPredictiveModeling)
+library(Metrics)
+library(verification)
+library(data.table)
+library(caret)
+library(ggplot2)
+library(xgboost)
+library(gmodels)
+library(MLmetrics)
+library(xlsx)
+library(pROC)  #for ROC curve
+library(lintr)
+library(formatR)
+library(janitor)
+```
+
+# [START PARALLEL PROCESS]{.underline}
+
+```{r}
+library(doParallel)
+detectCores()
+
+registerDoParallel(cores = 8)
+```
+
+# [INITIALIZE GLOBAL VARIABLES]{.underline}
+
+```{r}
+options(scipen = 999)
+set.seed(419)
+use.integer64 <- FALSE
+
+#"REG" = regression, "B_CLASS" = binary class, "M_CLASS" = multiclass
+analysis_type <- "B_CLASS"
+input_files <- "1"
+project <- "Credit"
+report_path <- "C:/Users/trich/OneDrive/R_code/rtest/R_testing"
+data_path <- "C:/Users/trich/OneDrive/R_code/credit"
+```
+
+# [GET FILES]{.underline}
+
+## Read data
+
+```{r}
+DT.Rds <- read.fst(paste0(data_path, "/DT.Rds"),
+          columns = NULL,
+          from = 1,
+          to = NULL,
+          as.data.table = FALSE,
+          old_format = FALSE)
+```
+
+## Partition data
+
+```{r}
+# Use 'p' to specify the fraction of data for the training set
+train_index <- createDataPartition(y = DT$target, p = 0.8, list = FALSE)
+train_dt <- DT[train_index, ]
+test_dt <- DT[-train_index, ]
+
+dim(train_dt)
+dim(test_dt)
+```
+
+# [MODELING PREP STEPS]{.underline}
+
+```{r}
+# Set the preprocessing parameters
+preprocessed_dt <- preProcess(DT, method = c("knnImpute", "nzv", "center", "range", "corr"))
+
+#Apply the preprocessing to new data
+train_dt <- predict(preprocessed_data, newdata = train_dt)
+```
+
+# [CREATE TRAINING CONTROL]{.underline}
+
+```{r}
+#for low % of samples in one class use metric = "Kappa"
+if (ANALYSIS_TYPE == 'B_CLASS') {
+  metric_m <- "ROC"                                          #ROC
+} else if (ANALYSIS_TYPE == 'M_CLASS') {
+  metric_m <- "Accuracy"
+} else {
+  metric_m <- "RMSE"
+  scoring = c("RMSE", "Rsquared")
+}
+
+#MEAN ABSOLUTE ERROE CUSTOM METRIC FUNCTION
+#maeSummary <- function (train_dt,
+#                        lev = NULL,
+#                        model = NULL) {
+#  #MAE <- function(actual, preds) mean(ae(actual, preds))
+#  out <- mae(train_dt$obs, train_dt$pred)  
+#  names(out) <- "MAE"
+#  out
+#} 
+```
+
+```{r}
+
+if (ANALYSIS_TYPE == 'B_CLASS') {
+  ensControl <- trainControl(method = "cv",         #k-fold cross-validation
+                             number = 1,
+                             index = createResample(train_dt, 2),
+                             classProbs = TRUE,
+                             verboseIter = FALSE,
+                             summaryFunction = twoClassSummary,
+                             savePredictions = "final", 
+                             allowParallel = TRUE)
+} else if (ANALYSIS_TYPE == 'M_CLASS') {
+  ensControl <- trainControl(method = "cv",
+                             number = 2,
+                             returnResamp = "final",
+                             classProbs = TRUE,
+                             verboseIter = FALSE,
+                             savePredictions = "final",
+                             summaryFunction = mnLogLoss,
+                             allowParallel = TRUE)
+} else {
+  ensControl <- trainControl(method = "cv",
+                             number = 2,
+                             #index = createResample(train_dt, 10),
+                             returnResamp = "final",
+                             #summaryFunction = maeSummary,
+                             classProbs = FALSE,
+                             savePredictions = "final",  #needed for ensemble
+                             verboseIter = FALSE,
+                             allowParallel = TRUE)
+}
+```
+
+RUN MODELS
+
+```{r}
+ens_models <- caretList(
+  target ~.,
+  data = train_dt,
+  metric = get("metric_m"),
+  trControl = ensControl,
+  maximize = FALSE,
+  #tuneLength = 5,
+  trace = FALSE, 
+  methodList = c( "nnet", "svmRadial", "glmStepAIC","glmnet")) 
+```
