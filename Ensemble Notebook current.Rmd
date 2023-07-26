@@ -139,7 +139,7 @@ if (ANALYSIS_TYPE == 'B_CLASS') {
 }
 ```
 
-RUN MODELS
+# [RUN MODELS]{.underline}
 
 ```{r}
 ens_models <- caretList(
@@ -151,4 +151,54 @@ ens_models <- caretList(
   #tuneLength = 5,
   trace = FALSE, 
   methodList = c( "nnet", "svmRadial", "glmStepAIC","glmnet")) 
+```
+
+# [EVALUATE MODELS]{.underline}
+
+```{r}
+ens_resamps <- resamples(ens_models, decreasing = TRUE)
+  summary(ens_resamps)
+```
+
+# [ASSESS MODEL DIFFERENCES]{.underline}
+
+```{r}
+ens_dif_Values <- diff(ens_resamps)
+  summary(ens_dif_Values)
+  bwplot(ens_dif_Values)
+  
+  xyplot(ens_resamps)
+    splom(ens_resamps)
+  modelCor(ens_resamps)              #models whose predictons are fairly un-correlated, but with simialr accuaracy are ensemble candidates
+  
+  bwplot(ens_resamps,metric = "ROC")
+  bwplot(ens_resamps)
+  
+   #shows possible outlier AUCs
+  densityplot(ens_resamps)
+```
+
+[CREATE WEIGHTED COMBINED MODEL]{.underline}
+
+```{r}
+ens_model2 <- caretEnsemble(               
+  ens_models, 
+  metric = metric_m,  
+  trControl = ensControl)
+ 
+  summary(ens_model2) 
+  
+  
+   if (ANALYSIS_TYPE == 'REG') {
+     ens_pred <- predict(ens_model2, newdata=train_dt)   
+     model_pred_train$ensemble_w <- ens_pred  
+     } else {
+     model_pred <- lapply(ens_list, predict, newdata=testing, type="prob")
+     model_pred<- lapply(model_pred, function(x) x[,"M"])                     #select only the "M" column
+     model_pred <- data.frame(model_pred)
+     ens_preds <- predict(greedy_ensemble, newdata=testing, type="prob")          #score of the ensemble model
+     model_pred$ensemble <- ens_preds
+     caTools::colAUC(model_preds, test_dt$target)
+   }
+   
 ```
