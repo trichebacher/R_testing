@@ -9,7 +9,7 @@ output: html_notebook
 
 ```{r call-libraries, echo=TRUE, warning=TRUE}
 
-R_LIBS_USER <- "C:/Users/Tom/OneDrive/R_code/win-library/4.2"
+#R_LIBS_USER <- "C:/Users/Tom/OneDrive/R_code/win-library/4.2"
 
 library(formatR)
 library(HiClimR)
@@ -31,6 +31,8 @@ library(rpart.plot)
 library(RColorBrewer)
 library(treeClust)
 library(fst)
+library(categoryEncodings)
+library(corrplot)
 
 library(doParallel)
 detectCores()
@@ -164,7 +166,7 @@ DT[, Id := as.integer(.I)]
 setcolorder(DT, c("Id", colnames(DT)[1:(ncol(DT) - 1)]))
 ```
 
-# [COLUMN WORK]{.underline}
+# [DATA SUMMARY REPORT]{.underline}
 
 Sample file if nrow \> 50,000
 
@@ -176,12 +178,17 @@ if (nrow(DT) > 50000) {
 }
 ```
 
-## Column Distribution Report
+## Distribution Report
 
 ```{r paged.print=TRUE}
 # Table with basic statistics
-smbinning.eda(DT_sample_1, rounding = 3)$eda
+distribution_report <- smbinning.eda(DT_sample_1, rounding = 3)$eda
 gc()
+```
+
+# [COLUMN WORK]{.underline} - cleaning
+
+```         
 ```
 
 ## Column missing value graph
@@ -217,6 +224,9 @@ rm(non_standard_pattern, non_standard_cols)
 ## Columns class changes
 
 ```{r eval=FALSE, include=FALSE}
+#individual var
+DT[, target := as.factor(target)]
+
 #by specific vars
 change_col_class <- c("return_dollar", "product_id")
 
@@ -237,24 +247,25 @@ DT[, (change_col_class) := lapply(.SD, as.numeric), .SDcols = change_col_class]
 rm(change_col_class)
 ```
 
-## Column deletion
+## Append identifier to original columns
 
-```{r eval=FALSE, include=FALSE}
+```{r}
+# get columns to exclude
+exclude_columns <- c("default", "Id")
 
-#delete columns with one value
-rm_cols <- colnames(DT)[sapply(DT, function(x) length(unique(x))) == 1]
+# Get original data columnns less those to exclude
+orig_columns <- setdiff(colnames(DT), exclude_columns)
 
-#delete specific cols
-rm_cols <- c("V1", "id")
+# define the suffix
+suffix <- "_orig"
 
-if (length(rm_cols) > 0) {
-  DT[, (rm_cols) := NULL]
-}
+# Append the suffix to the selected columns
+setnames(DT, old = orig_columns, new = paste0(orig_columns, suffix))
 
-rm(rm_cols)
+rm(orig_columns, exclude_columns, suffix)
 ```
 
-# [ROW WORK]{.underline}
+# [ROW WORK - cleaning]{.underline}
 
 ## Row missing values
 
@@ -277,26 +288,6 @@ omit_row <- c("x", "y")
 
 # see how many records are left
 DT[complete.cases(DT[, ..omit_row]), ]
-```
-
-# MISSING VALUE IMPUTE
-
-## Impute NA for incorrect missing values
-
-```{r eval=FALSE, include=FALSE}
-
-# Identify the values to replace
-value_to_replace <- 9999999999
-
-# Identify the columns to modify
-cols_to_modify <- names(DT)
-
-# Apply the modification using set() and lapply()
-lapply(cols_to_modify, function(col) {
-  set(DT, i = which(DT[[col]] == value_to_replace), j = col, value = NA_integer_)
-})
-
-rm(value_to_replace, cols_to_modify)
 ```
 
 # TARGET PREP
@@ -337,26 +328,6 @@ DT[, target := log(target + 1)]
 
 # CREATE TABLE WITH DATA TO BYPASS ANALYSIS
 
-## Append identifier to original column headers
-
-```{r}
-# get names to exclude
-exclude_columns <- c("target", "Id")
-
-# Get original data columnns
-orig_columns <- setdiff(colnames(DT), exclude_columns)
-
-# define the suffix
-suffix <- "_orig"
-
-# Append the suffix to the selected columns
-setnames(DT, old = orig_columns, new = paste0(orig_columns, suffix))
-
-rm(orig_columns, exclude_columns, suffix)
-```
-
-## Move bypass variable to new table
-
 ```{r include=FALSE}
 # identify vars for bypass table
 mov_var <- c("target", "Id")
@@ -380,7 +351,7 @@ rm(mov_var, DT_report_file)
 gc()
 ```
 
-# DATA EXPLORATION
+# DATA EXPLORATION & REPORTING
 
 Sample for report if records \> 50,000
 
@@ -458,7 +429,107 @@ stats_report_num_vars <- ExpNumStat(DT_sample_2[, -c("Id")],
 # test
 ```
 
-# HIGH CARDINALITY
+# [BASIC DATA CLEANING]{.underline}
+
+## Unnecessary column removal
+
+```{r eval=FALSE, include=FALSE}
+#delete columns with one value
+rm_cols <- colnames(DT)[sapply(DT, function(x) length(unique(x))) == 1]
+
+#delete specific cols
+rm_cols <- c("V1", "id")
+
+if (length(rm_cols) > 0) {
+  DT[, (rm_cols) := NULL]
+}
+
+rm(rm_cols)
+```
+
+## Impute incorrect NA values
+
+```{r eval=FALSE, include=FALSE}
+# Identify the values to replace
+value_to_replace <- 9999999999
+
+# Identify the columns to modify
+cols_to_modify <- names(DT)
+
+# Apply the modification using set() and lapply()
+lapply(cols_to_modify, function(col) {
+  set(DT, i = which(DT[[col]] == value_to_replace), j = col, value = NA_integer_)
+})
+
+rm(value_to_replace, cols_to_modify)
+```
+
+## Remove near-zero-variance data
+
+```{r}
+nzv_cols <- nearZeroVar(DT_sample_2[, -c("target", "Id")], 
+                        names = TRUE,
+                        saveMetrics = FALSE,   #make TRUE to run report
+                        freqCut = 95/5,
+                        uniqueCut = 10,
+                        allowParallel = TRUE)
+
+print(nzv_cols) 
+
+#checkConditionalX(DT_sample_2, y2)
+#delete near zero variance columns 
+if (length(nzv_cols) > 0) {
+  DT_sample_2[, (nzv_cols) := NULL]
+}
+
+# cleanup 
+rm(nzv_cols)
+```
+
+## Remove high correlation data
+
+```{r eval=FALSE, include=FALSE}
+# Get numeric column names & remove Id 
+num_cols <- colnames(DT_sample_2)[sapply(DT_sample_2, is.numeric) & names(DT_sample_2) != "Id"]  
+
+# split work by 10, use 64 bit algorithm
+cor_matrix <- fastCor(DT_sample_2[, ..num_cols], nSplit = 10, upperTri = FALSE, optBLAS = TRUE)
+
+corrplot(cor_matrix, method = "color")
+
+highly_correlated_vars <- findCorrelation(cor_matrix, cutoff = 0.9)
+
+#get the high corr names
+for (i in 1:length(highly_correlated_vars)) {
+  j <- highly_correlated_vars[i]
+  print(paste(colnames(cor_matrix)[i], colnames(cor_matrix)[j], sep = " and "))
+}
+
+
+DT[, -highly_correlated_vars]
+
+#cleanup 
+rm(num_cols, cor_matrix, highly_correlated_vars, highCorr_names)
+```
+
+## Remove linear dependent variables
+
+```{r eval=FALSE, include=FALSE}
+# find linear dependencies
+lin_depend <- findLinearCombos(DT_sample_2[, ..num_cols])  
+
+# extract names of column indexes
+linear_column_names <- lapply(lin_depend$linearCombos, function(index_list) {
+  colnames(DT_sample_2)[index_list]
+})
+
+# print names
+print(linear_column_names)
+
+rm(lin_depend, linear_column_names)
+```
+
+# [FEATURE CREATION]{.underline}
 
 ## Identify and collapse high cardinality vars
 
@@ -467,6 +538,11 @@ library(Hmisc)
 #get non-numeric columns, exclude target & require > 2 values
 char_fact_cols <- colnames(DT)[!sapply(DT, function(x) {
   (is.numeric(x))}) & colnames(DT) != "target"]   
+
+
+#test this
+target_vector <- DT$target
+lapply(DT_sample_2[, -c("Id")], table, target_vector)
 
 # frequency distribution before combining
 freq_before <- lapply(char_fact_cols, function(col) {
@@ -500,7 +576,7 @@ rm(threshold, char_fact_cols, DT_sample_2)
 gc()
 ```
 
-## Create binary variable from reduced cardinality
+### Create binary variable from reduced cardinality
 
 ```{r}
 # get factor and char columns & exclude relevant columns
@@ -566,7 +642,7 @@ rm(conv_to_bins, DT_cols, cols_to_update, suffix)
 gc()
 ```
 
-## Create bins based on non-activity
+### Create bins based on non-activity
 
 ```{r eval=FALSE, include=FALSE}
 #creates dummy rows to fill in missing rows based on all combinations of
@@ -580,7 +656,7 @@ dummy_indicator = FALSE
 )
 ```
 
-## Create weighted binaries
+### Create weighted binaries
 
 ```{r}
 # List of binary columns
@@ -599,29 +675,64 @@ rm(weighted_bin_cols, DT_rows)
 gc()
 ```
 
-# LAT/LONG WORK
+## Character and factor encoding
 
-```{r eval=FALSE, include=FALSE}
-library(geosphere)
+Replace all missing values in to be encoded vars
 
-#Dist from centroid
-DT$longmean <- mean((DT$longitude), na.rm = TRUE) / 1e6
-DT$latmean  <- mean((DT$latitude), na.rm = TRUE) / 1e6
-
-#Adjusted long lat
-DT$longitude1 <- DT$longitude / 1e6
-DT$latitude1 <- DT$latitude / 1e6
-
-# Haversine distance
-ncol(DT)
-DT$geodist <- distHaversine(p[,31:32], DT[, 33:34])
-
-rm_geo_cols <- c("longmean", "latmen", "longitude", "latitude1")
-
-DT <- DT[(rm_geo_cols) := NULL]
+```{r}
+# get all original char and factor columns
+cols_to_encode <- colnames(DT)[sapply(DT, function(x) {
+  (is.character(x) || is.factor(x)) }) & colnames(DT) != "target" & grepl("_orig", colnames(DT))]
 ```
 
-# Feature Creation
+### Replace NA with 0
+
+```{r}
+#we need to replace the NA to accomodate the encoding to mumeric
+#use specific columns
+#cols_to_encode <- c("hml", "city")
+
+#replace NA with "0"
+value_to_replace_NA <- 0
+
+for (col in cols_to_encode) {
+  DT[is.na(DT[[col]]), (col) := 0]
+}
+rm(value_to_replace_NA)
+```
+
+### Function to convert chars to num without order
+
+```{r}
+# Function: encode_character_as_numeric
+# Arguments:
+#   dt: A data.table object.
+#   columns: A character vector containing the names of the columns to be encoded as numeric (should be character columns).
+# Returns:
+#   The modified data.table dt with the specified columns encoded as numeric.
+encode_character_as_numeric <- function(dt, columns) {
+  dt[, (paste0(columns, "_encoded")) := lapply(.SD, function(x) as.numeric(factor(x))), .SDcols = columns]
+  return(dt)
+}
+
+#Call function and append encoded vars
+DT <- encode_character_as_numeric(DT, columns = cols_to_encode)
+```
+
+### Column Ordinal Encoding
+
+Recode values in ordinal columns
+
+```{r}
+# Replace values to reflect ordinal ranking
+DT[, column1 := set(column1, oldvalue1 = "newvalue1", oldvalue2 = "newvalue1")]
+```
+
+Create new column with the mean value of the target group
+
+```{r}
+DT[, (paste0(cols_to_mean, "_mean")) := lapply(.SD, mean), by = target, .SDcols = cols_to_mean]
+```
 
 ## Row level - binary transformations
 
@@ -894,19 +1005,22 @@ print(nzv_cols)
 
 ```{r include=FALSE}
 # Get numeric column names & remove Id 
-num_cols <- colnames(DT)[sapply(DT, is.numeric) & names(DT) != "Id"]  
+num_cols <- colnames(DT_analysis_sample)[sapply(DT_analysis_sample, is.numeric) & names(DT_analysis_sample) != "Id"]  
 
 # split work by 10, only upper triangle, use 64 bit algorithm
-cor_matrix <- fastCor(DT_analysis_sample[, ..num_cols], nSplit = 10, upperTri = TRUE, optBLAS = TRUE)
+cor_matrix <- fastCor(DT_analysis_sample[, ..num_cols], nSplit = 10, upperTri = FALSE, optBLAS = TRUE)
 
-# find the indices of the correlations above 0.8
-highCorr_index <- which(cor_matrix > 0.8, arr.ind = TRUE)
+corrplot(cor_matrix, method = "color")
 
-# extract the pair names from the column names
-highCorr_names <- paste(colnames(DT)[highCorr_index[, 1]], colnames(DT)[highCorr_index[, 2]], sep = " - ")
+highly_correlated_vars <- findCorrelation(cor_matrix, cutoff = 0.2)
 
-# print or save the pair names and the correlations
-high_cor_names <- as.data.table(cbind(highCorr_names, cor_matrix[highCorr_index]))
+for (i in 1:length(highly_correlated_vars)) {
+  j <- highly_correlated_vars[i]
+  print(paste(colnames(cor_matrix)[i], colnames(cor_matrix)[j], sep = " and "))
+}
+
+
+DT <- DT[, -highly_correlated_vars]
 
 #cleanup 
 rm(cor_matrix, highCorr_index, highCorr_names, num_cols)
@@ -944,9 +1058,33 @@ rm(nzv_cols, num_cols)
 rm(DT_analysis_sample)
 ```
 
-# SAVE DT 
+# SAVE DT
 
 ```{r}
 # Store the data table to disk in compressed version
 write.fst(DT, paste0(data_path, "/DT.Rds"), 100)
+```
+
+# OTHER CODE
+
+LAT/LONG WORK
+
+```{r eval=FALSE, include=FALSE}
+library(geosphere)
+
+#Dist from centroid
+DT$longmean <- mean((DT$longitude), na.rm = TRUE) / 1e6
+DT$latmean  <- mean((DT$latitude), na.rm = TRUE) / 1e6
+
+#Adjusted long lat
+DT$longitude1 <- DT$longitude / 1e6
+DT$latitude1 <- DT$latitude / 1e6
+
+# Haversine distance
+ncol(DT)
+DT$geodist <- distHaversine(p[,31:32], DT[, 33:34])
+
+rm_geo_cols <- c("longmean", "latmen", "longitude", "latitude1")
+
+DT <- DT[(rm_geo_cols) := NULL]
 ```
