@@ -67,8 +67,30 @@ fast_freq <- function(DT, column_names) {
   })
   return(result)
 }
-
 #result_list <- fast_freq(DT, c("months_loan_duration"))
+
+#******************************************************************************
+#FUNCTION TO RANK CHARACTER COLUMNS
+replace_values <- function(testData, look_up_table) {
+
+#get column name for table join
+column_name_for_key <- colnames(look_up_table[, 1])
+
+#get column name for new ordinal ranking var
+column_name_for_ordinal_var <- colnames(look_up_table[, 2])
+
+#set key on that column
+setkeyv(look_up_table, (column_name_for_key))
+
+#set the key on the identical column in the original table
+setkeyv(test_data, (column_name_for_key))
+
+#match tables to create new ordinal var
+test_data[look_up_table, (column_name_for_ordinal_var) := oldName_ordinal]
+}
+
+
+
 
 ```
 
@@ -224,6 +246,8 @@ rm(non_standard_pattern, non_standard_cols)
 ## Columns class changes
 
 ```{r eval=FALSE, include=FALSE}
+# If a column contains values that are strictly whole numbers (e.g., counts, IDs, years, months) make integer.
+
 #individual var
 DT[, target := as.factor(target)]
 
@@ -333,7 +357,7 @@ DT[, target := log(target + 1)]
 mov_var <- c("target", "Id")
 
 # create bypass table
-DT_report_file <- DT[, .SD, .SDcols = mov_var]
+DT_report_file <- DT[, ..mov_var]
 
 # Store the data table to disk in compressed version
 write.fst(DT_report_file, paste0(data_path, "/DT_report.Rds"), 100)
@@ -438,10 +462,10 @@ stats_report_num_vars <- ExpNumStat(DT_sample_2[, -c("Id")],
 rm_cols <- colnames(DT)[sapply(DT, function(x) length(unique(x))) == 1]
 
 #delete specific cols
-rm_cols <- c("V1", "id")
+rm_cols <- c("age_orig", "housing_orig")
 
 if (length(rm_cols) > 0) {
-  DT[, (rm_cols) := NULL]
+  DT[, c(rm_cols) := NULL]
 }
 
 rm(rm_cols)
@@ -450,6 +474,10 @@ rm(rm_cols)
 ## Impute incorrect NA values
 
 ```{r eval=FALSE, include=FALSE}
+
+#use for general replacement of NAs
+#setnafill(DT, "const", fill=0, cols = c("col1", "col2"))
+
 # Identify the values to replace
 value_to_replace <- 9999999999
 
@@ -460,6 +488,7 @@ cols_to_modify <- names(DT)
 lapply(cols_to_modify, function(col) {
   set(DT, i = which(DT[[col]] == value_to_replace), j = col, value = NA_integer_)
 })
+
 
 rm(value_to_replace, cols_to_modify)
 ```
@@ -529,11 +558,11 @@ print(linear_column_names)
 rm(lin_depend, linear_column_names)
 ```
 
-# [FEATURE CREATION]{.underline}
+# [FEATURE CREATION FOR CHAR VARS]{.underline}
 
 ## Identify and collapse high cardinality vars
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 library(Hmisc)
 #get non-numeric columns, exclude target & require > 2 values
 char_fact_cols <- colnames(DT)[!sapply(DT, function(x) {
@@ -541,8 +570,8 @@ char_fact_cols <- colnames(DT)[!sapply(DT, function(x) {
 
 
 #test this
-target_vector <- DT$target
-lapply(DT_sample_2[, -c("Id")], table, target_vector)
+#target_vector <- DT$target
+#lapply(DT_sample_2[, -c("Id")], table, target_vector)
 
 # frequency distribution before combining
 freq_before <- lapply(char_fact_cols, function(col) {
@@ -576,9 +605,42 @@ rm(threshold, char_fact_cols, DT_sample_2)
 gc()
 ```
 
-### Create binary variable from reduced cardinality
+## Character and factor encoding
+
+### Char to ordinal column recoding
 
 ```{r}
+# create replacement value tables
+replacements1 = data.table(
+  oldName = c("Buston", "Nu York", "Was DC"),
+  oldName_ordinal = c(1, 2, 3))
+
+replacements2 = data.table(
+  oldName2 = c("A", "B", "C"),
+  OldName2_ordinal = c(1, 2, 3))
+
+replacements3 = data.table(
+  oldName3 = c("aaa", "bbb", "ccc"),
+  oldname3_ordinal = c(1, 2, 3))
+
+#collect replacement tables in list
+replacements_list <- list(replacements1, replacements2, replacements3)
+
+#get number of objects in replacements_list
+count_replacment_list <- length(replacements_list)
+
+#loop through replacement table list
+for (i in 1:length(replacements_list)) {
+  #get consecutive replacement table
+  look_up_table <- replacements_list[[i]]
+  #run function and pass replacement table
+  replace_values(test_data, look_up_table)
+}
+```
+
+### Create binary variable from reduced cardinality
+
+```{r eval=FALSE, include=FALSE}
 # get factor and char columns & exclude relevant columns
 conv_to_bins <- colnames(DT)[sapply(DT, function(x) {
   (is.character(x) || is.factor(x)) && length(unique(x)) > 2
@@ -658,7 +720,7 @@ dummy_indicator = FALSE
 
 ### Create weighted binaries
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 # List of binary columns
 weighted_bin_cols <- colnames(DT)[grep("_bin", colnames(DT))]
 
@@ -675,22 +737,23 @@ rm(weighted_bin_cols, DT_rows)
 gc()
 ```
 
-## Character and factor encoding
+### Replace NAs for vars to be encoded
 
-Replace all missing values in to be encoded vars
+### Get all character and factor vars
 
 ```{r}
 # get all original char and factor columns
 cols_to_encode <- colnames(DT)[sapply(DT, function(x) {
   (is.character(x) || is.factor(x)) }) & colnames(DT) != "target" & grepl("_orig", colnames(DT))]
+
+#use specific columns
+#cols_to_encode <- c("hml", "city")
 ```
 
 ### Replace NA with 0
 
 ```{r}
 #we need to replace the NA to accomodate the encoding to mumeric
-#use specific columns
-#cols_to_encode <- c("hml", "city")
 
 #replace NA with "0"
 value_to_replace_NA <- 0
@@ -717,15 +780,6 @@ encode_character_as_numeric <- function(dt, columns) {
 
 #Call function and append encoded vars
 DT <- encode_character_as_numeric(DT, columns = cols_to_encode)
-```
-
-### Column Ordinal Encoding
-
-Recode values in ordinal columns
-
-```{r}
-# Replace values to reflect ordinal ranking
-DT[, column1 := set(column1, oldvalue1 = "newvalue1", oldvalue2 = "newvalue1")]
 ```
 
 Create new column with the mean value of the target group
