@@ -76,8 +76,8 @@ fast_freq <- function(data, column_names) {
 #result_list <- fast_freq(DT, c("months_loan_duration"))
 # Function to perform KS test
 perform_ks_test <- function(col_name) {
-  ks_result <- ks.test(DT_train_treated[[col_name]], 
-                       DT_test_treated[[col_name]])
+  ks_result <- ks.test(DT_train_treated_sample[[col_name]], 
+                       DT_test_treated_sample[[col_name]])
   return(ks_result)
 }
 #**************************char column to numeric var******************************
@@ -86,8 +86,8 @@ convert_to_ordered_numeric <- function(data, col_name, levels) {
   data[, (paste0(col_name, "_ord")) := as.numeric(factor(get(col_name), levels = levels, ordered = TRUE))]
 }
 #******************************Read text file**************************************
-#*read_data <- function(filename) {
-       fread(filename,
+read_data <- function(filename)   {
+                fread(filename,
                 # Set separator as comma
                 sep = ",",
                 # Read all rows - use nrows = xxx to read partial file
@@ -106,6 +106,15 @@ convert_to_ordered_numeric <- function(data, col_name, levels) {
                 na.strings = c("NA", "N/A", "null", "", "unknown"))
  }
 
+#*****************************Sample data*****************************************
+create_sample <- function(data_in, sample_size = 50000) {
+  if (nrow(data_in) > sample_size) {
+    data_sample <- data_in[sample(nrow(data_in), sample_size, replace = FALSE), ]
+  } else {
+    data_sample <- data_in
+  }
+  return(data_sample)
+}
 ```
 
 # [GET FILES:]{.underline} {#sec-get-files}
@@ -129,11 +138,8 @@ if (input_files == 1) {
 
 rm(read_data)
 
-
-
-
 #for speed testind a data dublication function
-#DT <- rbindlist(rep(list(DT), 10000))
+#DT <- rbindlist(rep(list(DT), 1000))
 ```
 
 ## Stack train and test file {#sec-stack-train-and-test-file}
@@ -186,24 +192,18 @@ setcolorder(DT, c("Id", colnames(DT)[1:(ncol(DT) - 1)]))
 
 # [DATA SUMMARY REPORTS]{.underline}
 
-Sample file if nrow \> 50,000
-
-```{r}
-if (nrow(DT) > 50000) {
-   DT_sample_1 <- DT[sample(nrow(DT), 50000, replace = FALSE), ]
-} else {
-   DT_sample_1 <- DT
-}
-```
-
 ## Distribution Report
 
 ```{r paged.print=TRUE}
+
+#create sample
+DT_sample_1 <- create_sample(DT)
+
 # Table with basic statistics
 Distribution_report <- smbinning.eda(DT_sample_1,
                                      rounding = 2)$eda
 
-
+rm(DT_sample_1)
 gc()
 ```
 
@@ -342,18 +342,27 @@ gc()
 
 # DATA EXPLORATION & REPORTING
 
+```{r}
+DT_sample_2 <- create_sample(DT)
+```
+
 ## Data profile report
 
 ```{r}
 # create in depth data report
-Data_profile_report <- create_report(DT_sample_1, y = "target", report_title = paste0(project, "Data Profile Report"), output_file = paste0(project, "_Data_Profile Report"), output_dir = report_path)
+Data_profile_report <- create_report(DT_sample_2, y = "target",
+                                     report_title = paste0(project,
+                                                           "Data Profile Report"),
+                                     output_file = paste0(project,
+                                                          "_Data_Profile Report"),
+                                     output_dir = report_path)
 ```
 
 ## Categorical variable report
 
 ```{r include=FALSE}
 # analysis of categorical data
-Report_cat_vars <- ExpCatStat(DT_sample_1[, -c("Id")],Target = "target",
+Report_cat_vars <- ExpCatStat(DT_sample_2[, -c("Id")],Target = "target",
                                   result = "Stat",
                                   clim = 10,        #max cat levels allowed
                                   nlim = 10,        #max unique values for num vars
@@ -371,20 +380,23 @@ saveRDS(Report_cat_vars, file = paste0(report_path,
 ## Categorical detail vars to target report
 
 ```{r include=FALSE}
-Report_cat_detail_vars<- ExpCatStat(DT_sample_1[, -c("Id")], Target = "target",
-           result = "IV",
-           clim = 5,          #max # of cats allowed
-           nlim = 10,         # of levels for num vars
-           bins = 10,         #max # of bins for cat & num vars
-           Pclass = "Have")
+Report_cat_detail_vars<- ExpCatStat(DT_sample_2[, -c("Id")],
+                                    Target = "target",
+                                    result = "IV",
+                                    clim = 5,          #max of cats allowed
+                                    nlim = 10,         # of levels for num vars
+                                    bins = 10,         #max bins for cat & num vars
+                                    Pclass = "Have")
 
-saveRDS(Report_cat_detail_vars, file = paste0(report_path,                                               file ="Report_categorical_detail_vars.rds"))
+saveRDS(Report_cat_detail_vars,
+        file = paste0(report_path,
+                      file ="Report_categorical_detail_vars.rds"))
 ```
 
 ## Numeric vars to target report
 
 ```{r include=FALSE}
-Report_numerical_vars <- ExpNumStat(DT_sample_1[, -c("Id")],
+Report_numerical_vars <- ExpNumStat(DT_sample_2[, -c("Id")],
                                     by = "G",
                                     gp = "target",
                                     Qnt = NULL,
@@ -396,7 +408,8 @@ Report_numerical_vars <- ExpNumStat(DT_sample_1[, -c("Id")],
                                     dcast = FALSE,
                                     val = NULL)
 
-saveRDS(Report_numerical_vars, file = paste0(report_path,                                               file ="Report_numerical_vars.rds"))
+saveRDS(Report_numerical_vars, file = paste0(report_path,
+                                             file ="Report_numerical_vars.rds"))
 ```
 
 # [DATA CLEANING]{.underline} {#sec-basic-data-cleaning}
@@ -453,7 +466,7 @@ rm(rm_cols)
 ### Column missing value graph
 
 ```{r eval=FALSE, include=FALSE}
-plot_missing(DT_sample_1) + theme_bw() + ggtitle("Percent Missing Values")  
+plot_missing(DT_sample_2) + theme_bw() + ggtitle("Percent Missing Values")  
 ```
 
 ### Impute incorrect NA values
@@ -486,6 +499,8 @@ convert_to_ordered_numeric(DT, "checking_balance_orig", checking_levels)
 convert_to_ordered_numeric(DT, "savings_balance_orig", savings_levels)
 
 rm(a, checking_levels, savings_levels)
+
+gc()
 ```
 
 # [ANALYTICAL COLUMN REMOVAL]{.underline}
@@ -494,9 +509,9 @@ rm(a, checking_levels, savings_levels)
 
 ```{r eval=FALSE, include=FALSE}
 # Get numeric column names & remove Id 
-num_cols <- setdiff(colnames(DT_sample_1)[sapply(DT_sample_1, is.numeric)], "Id")
+num_cols <- setdiff(colnames(DT_sample_2)[sapply(DT_sample_2, is.numeric)], "Id")
 
-cor_matrix <- cor(DT_sample_1[, ..num_cols], use = "pairwise.complete.obs")
+cor_matrix <- cor(DT_sample_2[, ..num_cols], use = "pairwise.complete.obs")
 
 corrplot(cor_matrix, method = "color")
 
@@ -506,7 +521,7 @@ highly_correlated_vars <- findCorrelation(cor_matrix, cutoff = 0.75, names = TRU
 
 DT[, -highly_correlated_vars]
 
-cor_matrix2 <- cor(DT_sample_1[, ..num_cols], use = "pairwise.complete.obs")
+cor_matrix2 <- cor(DT_sample_2[, ..num_cols], use = "pairwise.complete.obs")
 
 summary(cor_matrix[upper.tri(cor_matrix)])
 
@@ -517,7 +532,7 @@ rm(cor_matrix, highly_correlated_vars)
 ## Remove near-zero-variance data
 
 ```{r eval=FALSE, include=FALSE}
-nzv_cols <- nearZeroVar(DT_sample_1[, -c('target', 'Id')], 
+nzv_cols <- nearZeroVar(DT_sample_2[, -c('target', 'Id')], 
                         names = TRUE,
                         saveMetrics = FALSE,   #make TRUE to run report
                         freqCut = 95/5,
@@ -533,7 +548,8 @@ if (length(nzv_cols) > 0) {
 }
 
 # cleanup 
-rm(nzv_cols)
+rm(nzv_cols, DT_sample_2)
+gc()
 ```
 
 # [CHAID INTERACTION VARIABLES]{.underline}
@@ -546,7 +562,7 @@ if (analysis_type == 'REG') {
 }
 
 #minimum oberservation in a terminal node is # of records * x
-min_node_split = nrow(DT_sample_1) * 0.025
+min_node_split = nrow(DT_sample_2) * 0.025
 
 #usage parameters that control aspects of the rpart fit
 my_control <- rpart.control(minsplit = min_node_split * 3,
@@ -557,7 +573,7 @@ my_control <- rpart.control(minsplit = min_node_split * 3,
 #when error message check for factor level - shouldn't be greater than 53
 # Fit an initial rpart model
 rpart_model_init <- rpart(target ~ .,
-                          data = DT_sample_1,
+                          data = DT_sample_2,
                           #data = DT[, -c("Id"),with = FALSE],
                           method = method_m,
                           control = my_control)
@@ -574,12 +590,12 @@ rpart.plot(rpart_model_init, type = 3, extra = 1, digits = 2,
            tweak = 1.0, shadow.col = 'grey')
 
 #print confusion matrix
-confusionMatrix(DT_sample_1$target, predict(rpart_model_init, newdata = DT_sample_1, type = method_m))
+confusionMatrix(DT_sample_2$target, predict(rpart_model_init, newdata = DT_sample_2, type = method_m))
 
 # show population of end nodes
 print(rpart_model_init$frame$wt[rpart_model_init$frame$var == '<leaf>'])
 
-rm(min_node_split, my_control, orig_num_cols)
+rm(min_node_split, my_control)
 ```
 
 ## Prune the tree
@@ -599,12 +615,12 @@ rpart.plot(rpart_model, type = 3, extra = 1, digits = 2,
 varImp(rpart_model, drop = TRUE) 
 
 #create predictions based on model
-confusionMatrix(DT_sample_1$target, predict(rpart_model, newdata = DT_sample_1, type = method_m))
+confusionMatrix(DT_sample_2$target, predict(rpart_model, newdata = DT_sample_2, type = method_m))
 
 # show population of end nodes
 print(rpart_model$frame$wt[rpart_model$frame$var == '<leaf>'])
 
-rm(cp_min_xstd, DT_model_sample)
+rm(cp_min_xstd)
 gc()
 ```
 
@@ -620,7 +636,7 @@ table(DT$node_rank)
 #convert node_score to char for binning
 DT[, node_rank := as.character(node_rank)]
 
-rm(rpart_model, rpart_model_init, DT_sample_1)
+rm(rpart_model, rpart_model_init, DT_sample_2)
 gc()
 ```
 
@@ -669,7 +685,7 @@ DT_train_treated <- prepare(DT_calib_treatment_plan, DT_train_data, pruneSig = N
 ```{r two-way-vtreat}
 # Create the training and test sets
 
-trainIndex <- createDataPartition(DT$target, p = 0.60, list = FALSE)
+trainIndex <- createDataPartition(DT$target, p = 0.10, list = FALSE)
 DT_train_data <- DT[trainIndex, ]
 DT_test_data  <- DT[-trainIndex, ]
 
@@ -703,8 +719,15 @@ unpack[
   use_parallel = TRUE
   )
 
+#save treatment plan
+saveRDS(DT_train_treatment_plan, paste0(report_path, "DT_train_treatment_plan.Rds"))
+
 #convert scoreFrame to data table
 DT_train_treatment_plan_detail <- setDT(DT_train_treatment_plan$scoreFrame)
+#save treatment detail
+saveRDS(DT_train_treatment_plan_detail,
+        paste0(report_path,
+               "DT_train_treatment_plan_detail.Rds"))
 
 #Recommendet variables
 recommended_vars <- DT_train_treatment_plan_detail[recommended == TRUE, varName]
@@ -712,6 +735,16 @@ print(recommended_vars)
 
 #apply treatment to test data - don't convert to data.table
 DT_test_treated <- prepare(DT_train_treatment_plan, DT_test_data)
+
+#convert treated dataset to data.table
+setDT(DT_train_treated)
+setDT(DT_test_treated)
+
+#save train_treated in binary file
+write.fst(DT_train_treated, paste0(data_output_path, "DT_train_treated.fst"), 100)
+
+#save test_treated in binary file
+write.fst(DT_test_treated, paste0(data_output_path, "DT_test_treated.fst"), 100)
 
 #apply suffix "treat" to train and test data
 suffix <- "_treat"
@@ -722,37 +755,6 @@ cols_to_update <- setdiff(colnames(DT_test_treated), c("target", "Id"))
 for (cnt in list(DT_test_treated, DT_train_treated)) {
   setnames(cnt, old = cols_to_update, new = paste0(cols_to_update, suffix))
 }
-rm(trainIndex, suffix, cols_to_update, recommended_vars, DT_test_data, DT_train_data, cnt)
-```
-
-#### Treatment Analysis
-
-```{r}
-
-```
-
-#### Analysis between train and test data
-
-```{r warning=FALSE}
-
-ks_columns <- setdiff(colnames(DT_train_treated), c("target", "Id"))
-
-# call function "perform_ks_test"
-ks_test_results <- lapply(ks_columns, perform_ks_test)
-
-# Combine results into a data.table
-ks_test_results_dt <- data.table(
-  Column = ks_columns,
-  KS_statistic = sapply(ks_test_results,
-                        function(result) result$statistic),
-                        p_value = sapply(ks_test_results,
-                                         function(result) round(result$p.value,
-                                          digits = 2)))
-
-
-#convert treated dataset to data.table
-setDT(DT_train_treated)
-setDT(DT_test_treated)
 
 #assign replacement value
 replace_value <- -111
@@ -765,19 +767,51 @@ for (file_name in list(DT_test_treated, DT_train_treated)) {
   file_name[, (cols_to_modify) := lapply(.SD, function(x) replace(x, x == replace_value, NA)), .SDcols = cols_to_modify]
   }
 
-#save treatment plan
-saveRDS(DT_train_treatment_plan, paste0(report_path, "DT_train_treatment_plan.Rds"))
 
-#save treatment detail
-saveRDS(DT_train_treatment_plan_detail, paste0(report_path, "DT_train_treatment_plan_detail.Rds"))
 
-#save train_treated in binary file
-write.fst(DT_train_treated, paste0(data_output_path, "DT_train_treated.fst"), 100)
 
-#save test_treated in binary file
-write.fst(DT_test_treated, paste0(data_output_path, "DT_test_treated.fst"), 100)
 
-rm(ks_columns, ks_test_results, ks_test_results, p_value, DT_train_treated, file_name, replace_value, cols_to_modify)
+
+rm(trainIndex, suffix, cols_to_update, recommended_vars, DT_test_data, DT_train_data, cnt, DT_train_treatment_plan_detail, DT_train_treatment_plan)
+gc()
+```
+
+#### Treatment Analysis
+
+```{r}
+
+```
+
+#### Analysis between train and test data
+
+```{r warning=FALSE}
+
+#create samples
+DT_train_treated_sample <- create_sample(DT_train_treated)
+DT_test_treated_sample <- create_sample(DT_test_treated)
+
+ks_columns <- setdiff(colnames(DT_train_treated_sample), c("target", "Id"))
+
+# call function "perform_ks_test"
+ks_test_results <- lapply(ks_columns, perform_ks_test)
+
+# Combine results into a data.table
+Report_ks_results <- data.table(
+  Column = ks_columns,
+  KS_statistic = sapply(ks_test_results,
+                        function(result) result$statistic),
+                        p_value = sapply(ks_test_results,
+                                         function(result) round(result$p.value,
+                                          digits = 2)))
+
+#save report to disk
+saveRDS(Report_ks_results, file = paste0(report_path,
+                                               file ="Report_ks_results.rds"))
+
+
+rm(ks_columns, p_value, file_name, replace_value, cols_to_modify, DT_train_treated_sample, DT_test_treated_sample, ks_test_results)
+
+gc()
 ```
 
 K[S STATISTICS SIGNIFICANTS LEVEL]{.underline}
@@ -792,11 +826,31 @@ K[S STATISTICS SIGNIFICANTS LEVEL]{.underline}
 
 -   **0.80 to 1.00:** The two distributions are extremely different.
 
+# [CLEAN-UP]{.underline}
+
+```{r}
+#remove global vars
+rm(cl, analysis_type, data_input_path, data_output_path, Data_profile_report, input_files, method_m, project, report_path, unpack, use.integer64, vtreat_treatment)
+   
+#remove reports
+rm(Distribution_report, Report_cat_detail_vars, Report_cat_vars, Report_numerical_vars, Report_ks_results)
+
+#remove data
+rm(DT_test_treated, DT_train_treated)
+
+#remove functions
+rm(convert_to_ordered_numeric, create_sample, fast_freq, perform_ks_test)
+
+#close cluster
+stopCluster(cl)
+```
+
 # [OTHER CODE]{.underline}
 
 Row level - binary pattern creation
 
 ```{r eval=FALSE, include=FALSE}
+
 
 #identify binary variables
 create_bin_vars <- names(Filter(function(x) uniqueN(na.omit(x)) <= 2 & max(x) == 1, DT))
